@@ -40,7 +40,7 @@ BufferBlockManager::~BufferBlockManager()
 	}
 }
 
-void BufferBlockManager::enqueueBlockForRead(BufferBlock* block)
+void BufferBlockManager::EnqueueBlockForRead(BufferBlock* block)
 {
 	queueLock.lock();
 
@@ -53,12 +53,12 @@ void BufferBlockManager::enqueueBlockForRead(BufferBlock* block)
 	signal.notify_one();
 }
 
-void BufferBlockManager::dequeueBlockForRead(BufferBlock** block)
+void BufferBlockManager::DequeueBlockForRead(BufferBlock** block)
 {
 WAITFOR:
 
 	if (blocksPendingRead.size() == 0)
-		waitForEnqueue();
+		WaitForEnqueue();
 
 	queueLock.lock();
 
@@ -75,7 +75,7 @@ WAITFOR:
 	queueLock.unlock();
 }
 
-void BufferBlockManager::enqueueBlockForWrite(BufferBlock* block)
+void BufferBlockManager::EnqueueBlockForWrite(BufferBlock* block)
 {
 	queueLock.lock();
 
@@ -86,12 +86,12 @@ void BufferBlockManager::enqueueBlockForWrite(BufferBlock* block)
 	signal.notify_one();
 }
 
-void BufferBlockManager::dequeueBlockForWrite(BufferBlock** block)
+void BufferBlockManager::DequeueBlockForWrite(BufferBlock** block)
 {
 WAITFOR:
 
 	if (blocksPendingWrite.size() == 0)
-		waitForEnqueue();
+		WaitForEnqueue();
 
 	queueLock.lock();
 
@@ -108,7 +108,7 @@ WAITFOR:
 	queueLock.unlock();
 }
 
-void BufferBlockManager::resetState()
+void BufferBlockManager::ResetState()
 {
 	queueLock.lock();
 
@@ -122,7 +122,7 @@ void BufferBlockManager::resetState()
 	queueLock.unlock();
 }
 
-void BufferBlockManager::waitForEnqueue()
+void BufferBlockManager::WaitForEnqueue()
 {
 	std::unique_lock<std::mutex> lk(signalLock);
 	signal.wait(lk);
@@ -140,21 +140,41 @@ struct AsyncCopyContext
 		this->copyStatus = copyStatus;
 		this->didFinishWrite = false;
 	}
-	void bytesWritten(int bytesWritten)
+	void BytesWritten(int bytesWritten)
 	{
 		if (copyStatus)
-			copyStatus->bytesWritten(bytesWritten);
+			copyStatus->BytesWritten(bytesWritten);
 	}
-	void bytesRead(int numberOfBytesRead)
+	void BytesRead(int numberOfBytesRead)
 	{
 		if (copyStatus)
-			copyStatus->bytesRead(numberOfBytesRead);
+			copyStatus->BytesRead(numberOfBytesRead);
 	}
-	bool cancel()
+	bool Cancel()
 	{
 		if (copyStatus)
-			return copyStatus->cancel;
+			return copyStatus->IsCancelled();
 		return false;
+	}
+	void ReadThreadInit()
+	{
+		if (copyStatus)
+			return copyStatus->ReadThreadInit();
+	}
+	void ReadThreadDestroy()
+	{
+		if (copyStatus)
+			return copyStatus->ReadThreadDestroy();
+	}
+	void WriteThreadInit()
+	{
+		if (copyStatus)
+			return copyStatus->WriteThreadInit();
+	}
+	void WriteThreadDestroy()
+	{
+		if (copyStatus)
+			return copyStatus->WriteThreadDestroy();
 	}
 	BufferBlockManager* bufferBlockManager;
 	ReadStream* readStream;
@@ -167,6 +187,8 @@ struct AsyncCopyContext
 
 void ReadStreamThread(AsyncCopyContext* asyncContext)
 {
+	asyncContext->ReadThreadInit();
+
 	int bytesRead = 0;
 	BufferBlock* readBuffer = NULL;
 	int readResult = ASYNC_COPY_READ_WRITE_SUCCESS;
@@ -177,21 +199,21 @@ void ReadStreamThread(AsyncCopyContext* asyncContext)
 		// and we haven't had an error reading yet
 		&& readResult == ASYNC_COPY_READ_WRITE_SUCCESS)
 	{
-		if (asyncContext->cancel())
+		if (asyncContext->Cancel())
 			return;
 
 		// let's deque a block to read to!
-		asyncContext->bufferBlockManager->dequeueBlockForRead(&readBuffer);
+		asyncContext->bufferBlockManager->DequeueBlockForRead(&readBuffer);
 
-		readResult = asyncContext->readStream->read(readBuffer->buffer, readBuffer->bufferSize, &bytesRead);
+		readResult = asyncContext->readStream->Read(readBuffer->buffer, readBuffer->bufferSize, &bytesRead);
 		readBuffer->actualSize = bytesRead;
 		readBuffer->isLastBlock = bytesRead == 0;
 
 		if (readResult == ASYNC_COPY_READ_WRITE_SUCCESS)
 		{
 			// this was a valid read, go ahead and queue it for writing
-			asyncContext->bufferBlockManager->enqueueBlockForWrite(readBuffer);
-			asyncContext->bytesRead(bytesRead);
+			asyncContext->bufferBlockManager->EnqueueBlockForWrite(readBuffer);
+			asyncContext->BytesRead(bytesRead);
 		}
 		else
 		{
@@ -202,15 +224,22 @@ void ReadStreamThread(AsyncCopyContext* asyncContext)
 			readBuffer->isLastBlock = true;
 			readBuffer->actualSize = 0;
 
-			asyncContext->bufferBlockManager->enqueueBlockForWrite(readBuffer);
+			asyncContext->bufferBlockManager->EnqueueBlockForWrite(readBuffer);
 		}
 
-		if (readBuffer->isLastBlock) return;
+		if (readBuffer->isLastBlock)
+		{
+			break;
+		}
 	}
+
+	asyncContext->ReadThreadDestroy();
 }
 
 void WriteStreamThread(AsyncCopyContext* asyncContext)
 {
+	asyncContext->WriteThreadInit();
+
 	int bytesWritten = 0;
 	BufferBlock* writeBuffer = NULL;
 	int writeResult = ASYNC_COPY_READ_WRITE_SUCCESS;
@@ -222,34 +251,36 @@ void WriteStreamThread(AsyncCopyContext* asyncContext)
 		// and we haven't had an error writing yet
 		&& writeResult == ASYNC_COPY_READ_WRITE_SUCCESS)
 	{
-		if (asyncContext->cancel())
+		if (asyncContext->Cancel())
 			return;
 
 		// lets dequeue a block for writing!
-		asyncContext->bufferBlockManager->dequeueBlockForWrite(&writeBuffer);
+		asyncContext->bufferBlockManager->DequeueBlockForWrite(&writeBuffer);
 
 		isLastWriteBlock = writeBuffer->isLastBlock;
 
 		if (writeBuffer->actualSize > 0)
-			writeResult = asyncContext->writeStream->write(writeBuffer->buffer, writeBuffer->actualSize, &bytesWritten);
+			writeResult = asyncContext->writeStream->Write(writeBuffer->buffer, writeBuffer->actualSize, &bytesWritten);
 
 		if (writeResult == ASYNC_COPY_READ_WRITE_SUCCESS)
 		{
-			asyncContext->bufferBlockManager->enqueueBlockForRead(writeBuffer);
-			asyncContext->bytesWritten(bytesWritten);
+			asyncContext->bufferBlockManager->EnqueueBlockForRead(writeBuffer);
+			asyncContext->BytesWritten(bytesWritten);
 			if (isLastWriteBlock)
 			{
 				asyncContext->didFinishWrite = true;
-				return;
+				break;
 			}
 		}
 		else
 		{
 			asyncContext->writeResult = writeResult;
-			asyncContext->bufferBlockManager->enqueueBlockForRead(writeBuffer);
-			return;
+			asyncContext->bufferBlockManager->EnqueueBlockForRead(writeBuffer);
+			break;
 		}
 	}
+
+	asyncContext->WriteThreadDestroy();
 }
 
 void AsyncCopyStream(BufferBlockManager* bufferBlockManager, ReadStream* readStream, WriteStream* writeStream, int* readResult, int* writeResult, bool* didFinish, AsyncCopyStatus* copyStatus)

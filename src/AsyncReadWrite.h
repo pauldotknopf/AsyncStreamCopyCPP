@@ -17,22 +17,25 @@ struct ReadStream
 {
 	// read a stream to a buffer.
 	// return non-zero if error occured
-	virtual int read(char* buffer, int bufferSize, int* bytesRead) = 0;
+	virtual int Read(char* buffer, int bufferSize, int* bytesRead) = 0;
 };
 
 struct WriteStream
 {
 	// write a buffer to a stream.
 	// return non-zero if error occured
-	virtual int write(char* buffer, int bufferSize, int* bytesWritten) = 0;
+	virtual int Write(char* buffer, int bufferSize, int* bytesWritten) = 0;
 };
 
 struct AsyncCopyStatus
 {
-	AsyncCopyStatus() :cancel(false) {}
-	virtual void bytesWritten(int bytesWritten) { };
-	virtual void bytesRead(int numberOfBytesRead) { };
-	bool cancel;
+	virtual void BytesWritten(int bytesWritten) { };
+	virtual void BytesRead(int numberOfBytesRead) { };
+	virtual bool IsCancelled() { return false; }
+	virtual void ReadThreadInit() { }
+	virtual void ReadThreadDestroy() { }
+	virtual void WriteThreadInit() { }
+	virtual void WriteThreadDestroy() { }
 };
 
 class BufferBlockManager
@@ -43,15 +46,15 @@ public:
 	BufferBlockManager(int numberOfBlocks, int bufferSize);
 	~BufferBlockManager();
 
-	void enqueueBlockForRead(BufferBlock* block);
-	void dequeueBlockForRead(BufferBlock** block);
-	void enqueueBlockForWrite(BufferBlock* block);
-	void dequeueBlockForWrite(BufferBlock** block);
-	void resetState();
+	void EnqueueBlockForRead(BufferBlock* block);
+	void DequeueBlockForRead(BufferBlock** block);
+	void EnqueueBlockForWrite(BufferBlock* block);
+	void DequeueBlockForWrite(BufferBlock** block);
+	void ResetState();
 
 private:
 
-	void waitForEnqueue();
+	void WaitForEnqueue();
 
 	std::list<BufferBlock*> blocks;
 	std::queue<BufferBlock*> blocksPendingRead;
