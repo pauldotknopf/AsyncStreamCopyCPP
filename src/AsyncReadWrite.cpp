@@ -119,19 +119,39 @@ void BufferBlockManager::resetState()
 
 struct AsyncCopyContext
 {
-	AsyncCopyContext(BufferBlockManager* bufferBlockManager, ReadStream* readStream, WriteStream* writeStream)
+	AsyncCopyContext(BufferBlockManager* bufferBlockManager, ReadStream* readStream, WriteStream* writeStream, AsyncCopyStatus* copyStatus)
 	{
 		this->bufferBlockManager = bufferBlockManager;
 		this->readStream = readStream;
 		this->writeStream = writeStream;
 		this->readResult = ASYNC_COPY_READ_WRITE_SUCCESS;
 		this->writeResult = ASYNC_COPY_READ_WRITE_SUCCESS;
+		this->copyStatus = copyStatus;
+		this->didFinishWrite = false;
+	}
+	void bytesWritten(int bytesWritten)
+	{
+		if (copyStatus)
+			copyStatus->bytesWritten(bytesWritten);
+	}
+	void bytesRead(int numberOfBytesRead)
+	{
+		if (copyStatus)
+			copyStatus->bytesRead(numberOfBytesRead);
+	}
+	bool cancel()
+	{
+		if (copyStatus)
+			return copyStatus->cancel;
+		return false;
 	}
 	BufferBlockManager* bufferBlockManager;
 	ReadStream* readStream;
 	WriteStream* writeStream;
 	int readResult;
 	int writeResult;
+	AsyncCopyStatus* copyStatus;
+	bool didFinishWrite;
 };
 
 void ReadStreamThread(AsyncCopyContext* asyncContext)
@@ -146,6 +166,9 @@ void ReadStreamThread(AsyncCopyContext* asyncContext)
 		// and we haven't had an error reading yet
 		&& readResult == ASYNC_COPY_READ_WRITE_SUCCESS)
 	{
+		if (asyncContext->cancel())
+			return;
+
 		// let's deque a block to read to!
 		asyncContext->bufferBlockManager->dequeueBlockForRead(&readBuffer);
 
@@ -157,6 +180,7 @@ void ReadStreamThread(AsyncCopyContext* asyncContext)
 		{
 			// this was a valid read, go ahead and queue it for writing
 			asyncContext->bufferBlockManager->enqueueBlockForWrite(readBuffer);
+			asyncContext->bytesRead(bytesRead);
 		}
 		else
 		{
@@ -187,6 +211,9 @@ void WriteStreamThread(AsyncCopyContext* asyncContext)
 		// and we haven't had an error writing yet
 		&& writeResult == ASYNC_COPY_READ_WRITE_SUCCESS)
 	{
+		if (asyncContext->cancel())
+			return;
+
 		// lets dequeue a block for writing!
 		asyncContext->bufferBlockManager->dequeueBlockForWrite(&writeBuffer);
 
@@ -198,7 +225,12 @@ void WriteStreamThread(AsyncCopyContext* asyncContext)
 		if (writeResult == ASYNC_COPY_READ_WRITE_SUCCESS)
 		{
 			asyncContext->bufferBlockManager->enqueueBlockForRead(writeBuffer);
-			if (isLastWriteBlock) return;
+			asyncContext->bytesWritten(bytesWritten);
+			if (isLastWriteBlock)
+			{
+				asyncContext->didFinishWrite = true;
+				return;
+			}
 		}
 		else
 		{
@@ -209,9 +241,9 @@ void WriteStreamThread(AsyncCopyContext* asyncContext)
 	}
 }
 
-void AsyncCopyStream(BufferBlockManager* bufferBlockManager, ReadStream* readStream, WriteStream* writeStream, int* readResult, int* writeResult)
+void AsyncCopyStream(BufferBlockManager* bufferBlockManager, ReadStream* readStream, WriteStream* writeStream, int* readResult, int* writeResult, bool* didFinish, AsyncCopyStatus* copyStatus)
 {
-	AsyncCopyContext asyncContext(bufferBlockManager, readStream, writeStream);
+	AsyncCopyContext asyncContext(bufferBlockManager, readStream, writeStream, copyStatus);
 	std::thread readThread(ReadStreamThread, &asyncContext);
 	std::thread writeThread(WriteStreamThread, &asyncContext);
 
@@ -220,4 +252,5 @@ void AsyncCopyStream(BufferBlockManager* bufferBlockManager, ReadStream* readStr
 
 	*readResult = asyncContext.readResult;
 	*writeResult = asyncContext.writeResult;
+	*didFinish = asyncContext.didFinishWrite;
 }

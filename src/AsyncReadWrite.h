@@ -26,6 +26,14 @@ struct WriteStream
 	virtual int write(char* buffer, int bufferSize, int* bytesWritten) = 0;
 };
 
+struct AsyncCopyStatus
+{
+	AsyncCopyStatus() :cancel(false) {}
+	virtual void bytesWritten(int bytesWritten) { };
+	virtual void bytesRead(int numberOfBytesRead) { };
+	bool cancel;
+};
+
 class BufferBlockManager
 {
 
@@ -50,4 +58,4 @@ private:
 
 };
 
-void AsyncCopyStream(BufferBlockManager* bufferBlockManager, ReadStream* readStream, WriteStream* writeStream, int* readResult, int* writeResult);
+void AsyncCopyStream(BufferBlockManager* bufferBlockManager, ReadStream* readStream, WriteStream* writeStream, int* readResult, int* writeResult, bool* didFinish, AsyncCopyStatus* copyStatus);
