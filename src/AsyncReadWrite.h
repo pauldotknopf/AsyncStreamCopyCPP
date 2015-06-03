@@ -7,6 +7,7 @@
 #include <chrono>
 #include <list>
 #include <thread>
+#include <condition_variable>
 
 #define ASYNC_COPY_READ_WRITE_SUCCESS 0
 
@@ -50,12 +51,14 @@ public:
 
 private:
 
+	void waitForEnqueue();
+
 	std::list<BufferBlock*> blocks;
 	std::queue<BufferBlock*> blocksPendingRead;
 	std::queue<BufferBlock*> blocksPendingWrite;
 	std::mutex queueLock;
-	std::chrono::milliseconds dequeueSleepTime;
-
+	std::mutex signalLock;
+	std::condition_variable signal;
 };
 
 void AsyncCopyStream(BufferBlockManager* bufferBlockManager, ReadStream* readStream, WriteStream* writeStream, int* readResult, int* writeResult, bool* didFinish, AsyncCopyStatus* copyStatus);

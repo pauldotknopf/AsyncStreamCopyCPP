@@ -25,7 +25,6 @@ struct BufferBlock
 
 BufferBlockManager::BufferBlockManager(int numberOfBlocks, int bufferSize)
 {
-	dequeueSleepTime = std::chrono::milliseconds(100);
 	for (int x = 0; x < numberOfBlocks; x++)
 	{
 		BufferBlock* block = new BufferBlock(bufferSize);
@@ -50,13 +49,16 @@ void BufferBlockManager::enqueueBlockForRead(BufferBlock* block)
 	blocksPendingRead.push(block);
 
 	queueLock.unlock();
+
+	signal.notify_one();
 }
 
 void BufferBlockManager::dequeueBlockForRead(BufferBlock** block)
 {
 WAITFOR:
-	while (blocksPendingRead.size() == 0)
-		std::this_thread::sleep_for(dequeueSleepTime);
+
+	if (blocksPendingRead.size() == 0)
+		waitForEnqueue();
 
 	queueLock.lock();
 
@@ -80,13 +82,16 @@ void BufferBlockManager::enqueueBlockForWrite(BufferBlock* block)
 	blocksPendingWrite.push(block);
 
 	queueLock.unlock();
+
+	signal.notify_one();
 }
 
 void BufferBlockManager::dequeueBlockForWrite(BufferBlock** block)
 {
 WAITFOR:
-	while (blocksPendingWrite.size() == 0)
-		std::this_thread::sleep_for(dequeueSleepTime);
+
+	if (blocksPendingWrite.size() == 0)
+		waitForEnqueue();
 
 	queueLock.lock();
 
@@ -115,6 +120,12 @@ void BufferBlockManager::resetState()
 	}
 
 	queueLock.unlock();
+}
+
+void BufferBlockManager::waitForEnqueue()
+{
+	std::unique_lock<std::mutex> lk(signalLock);
+	signal.wait(lk);
 }
 
 struct AsyncCopyContext

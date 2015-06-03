@@ -1,3 +1,4 @@
+#include <Windows.h>
 #include <stdio.h>
 #include <tchar.h>
 #include "AsyncReadWrite.h"
@@ -64,6 +65,36 @@ struct AsyncTestCopyStatus : AsyncCopyStatus
 		
 	};
 };
+
+std::mutex lock;
+std::condition_variable signal;
+
+void Thread1()
+{
+	while (true)
+	{
+		std::unique_lock<std::mutex> lk(lock);
+		printf("Waiting for signal...\n");
+		signal.wait(lk);
+		printf("Got signal!\n");
+	}
+}
+
+void Thread2()
+{
+	while (true)
+	{
+		printf("Locking thread 2\n");
+		lock.lock();
+		printf("Locked thread 2\n");
+
+		Sleep(3000);
+
+		printf("Unlocking thread 2\n");
+		lock.unlock();
+		printf("Unlocked thread 2\n");
+	}
+}
 
 int _tmain(int argc, _TCHAR* argv[])
 {
